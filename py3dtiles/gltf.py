@@ -303,24 +303,6 @@ def compute_header(binVertices, binNormals, binIds,
         }
     }
 
-    # Technique for batched glTF
-    """if batched:
-        header['materials']['defaultMaterial']['technique'] = "T0"
-        header['techniques'] = {
-            "T0": {
-                "attributes": {
-                    "a_batchId": "batchId"
-                },
-                "parameters": {
-                    "batchId": {
-                        "semantic": "_BATCHID",
-                        "type": 5123
-                    }
-                }
-            }
-        }
-    """
-
     if len(extensions) != 0:
         header["extensionsUsed"] = extensions
 
