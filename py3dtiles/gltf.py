@@ -109,7 +109,7 @@ class GlTF(object):
         for i in range(0, len(nodes)):
             (verticeArray, normalArray) = trianglesToArrays(nodes[i],
                                                             normals[i])
-            packedVertices = b''.join(verticeArray)
+            packedVertices = b''.join(verticeArray) # concatenate array in byte string
             binVertices.append(packedVertices)
             binNormals.append(b''.join(normalArray))
             nVertices.append(len(verticeArray))
@@ -239,7 +239,7 @@ def compute_header(binVertices, binNormals, binIds,
                 'attributes': {
                     "POSITION": "AV",
                     "NORMAL": "AN",
-                    "BATCHID": "AD"
+                    "_BATCHID": "AD"
                 },
                 "material": "defaultMaterial",
                 "mode": 4
