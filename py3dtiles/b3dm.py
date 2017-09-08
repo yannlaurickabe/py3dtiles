@@ -4,17 +4,21 @@ import numpy as np
 
 from .tile import Tile, TileHeader, TileBody, TileType
 from .gltf import GlTF
+from .batch_table import BatchTable
 
 
 class B3dm(Tile):
 
     @staticmethod
-    def from_glTF(gltf):
+    def from_glTF(gltf, bt=None):
         """
         Parameters
         ----------
         gltf : GlTF
             glTF object representing a set of objects
+
+        bt : Batch Table (optional)
+            BatchTable object containing per-feature metadata
 
         Returns
         -------
@@ -23,8 +27,10 @@ class B3dm(Tile):
 
         tb = B3dmBody()
         tb.glTF = gltf
+        tb.batch_table = bt
 
         th = B3dmHeader()
+        th.sync(tb)
 
         t = Tile()
         t.body = tb
@@ -97,15 +103,15 @@ class B3dmHeader(TileHeader):
 
         # extract array
         glTF_arr = body.glTF.to_array()
-        # bth_arr = body.batch_table.header.to_array()
+        bth_arr = body.batch_table.to_array()
         # btb_arr = body.batch_table.body.to_array()
         # fth_arr = body.feature_table.header.to_array()
         # ftb_arr = body.feature_table.body.to_array()
 
         # sync the tile header with feature table contents
-        self.tile_byte_length = len(glTF_arr) + B3dmHeader.BYTELENGTH
-        #    + len(bth_arr) + len(btb_arr) + len(fth_arr) + len(ftb_arr)
-        # self.bt_json_byte_length = len(bth_arr)
+        self.tile_byte_length = len(glTF_arr) + B3dmHeader.BYTELENGTH + len(bth_arr)
+        #   + len(btb_arr) + len(fth_arr) + len(ftb_arr)
+        self.bt_json_byte_length = len(bth_arr)
         # self.bt_bin_byte_length = len(btb_arr)
         # self.ft_json_byte_length = len(fth_arr)
         # self.ft_bin_byte_length = len(ftb_arr)
@@ -142,13 +148,14 @@ class B3dmHeader(TileHeader):
 
 class B3dmBody(TileBody):
     def __init__(self):
-        # self.batch_table = BatchTable()
+        self.batch_table = BatchTable()
         # self.feature_table = FeatureTable()
         self.glTF = GlTF()
 
     def to_array(self):
-        # TODO : export batch table and feature table
-        return self.glTF.to_array()
+        # TODO : export feature table
+        return np.concatenate((self.batch_table.to_array(),
+                                self.glTF.to_array()))
 
     @staticmethod
     def from_glTF(glTF):

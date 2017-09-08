@@ -19,6 +19,7 @@ class GlTF(object):
         # body must be 4-byte aligned
         scene += ' '*(4 - len(scene) % 4)
 
+        # Create binary header of gltf according to the documentation
         binaryHeader = np.fromstring("glTF", dtype=np.uint8)
         binaryHeader2 = np.array([1,
                                   20 + len(self.body) + len(scene),
