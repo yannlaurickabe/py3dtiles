@@ -11,7 +11,8 @@ requirements = (
     'pyproj',
     'cython',
     'triangle',
-    'psycopg2'
+    'psycopg2',
+    'pyyaml'
 )
 
 dev_requirements = (

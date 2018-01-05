@@ -2,13 +2,14 @@
 # -*- coding: utf-8 -*-
 
 import argparse
-import psycopg2
-import getpass
 import math
 import json
 import os
 import errno
 import numpy as np
+import yaml
+from psycopg2 import connect, sql
+from psycopg2.extras import NamedTupleCursor
 from py3dtiles import TriangleSoup, GlTF, B3dm, BatchTable
 
 class BoundingBox():
@@ -170,13 +171,10 @@ def arrays2tileset(positions, normals, bboxes, transform, ids=None):
                     'normal': normals[pos],
                     'bbox': [[float(i) for i in j] for j in bboxes[pos]],
                 })
-                if ids is not None:
-                    gids.append(ids[pos])
+                gids.append(ids[pos])
             gltf = GlTF.from_binary_arrays(binarrays, identity)
-            bt = None
-            if ids is not None:
-                bt = BatchTable()
-                bt.add_property_from_array("id", gids)
+            bt = BatchTable()
+            bt.add_property_from_array("id", gids)
             b3dm = B3dm.from_glTF(gltf, bt).to_array()
             f = open("tiles/{0}.b3dm".format(node.id), 'wb')
             f.write(b3dm)
@@ -211,37 +209,34 @@ def wkbs2tileset(wkbs, ids, transform):
     bboxes = [ts.getBbox() for ts in geoms]
     arrays2tileset(positions, normals, bboxes, transform, ids)
 
-def from_db(db_name, table_name, column_name, id_column_name, user_name):
-    user = getpass.getuser() if user_name == None else user_name
+def from_db(db_config):
 
-    try:
-        connection = psycopg2.connect(dbname=db_name, user=user)
-    except psycopg2.OperationalError:
-        pw = getpass.getpass("Postgres password for user {}\n".format(user))
-        connection = psycopg2.connect(dbname=db_name, user=user, password=pw)
+    # Connect to database
+    db = connect(
+        "postgresql://{0}:{1}@{2}:{3}/{4}"
+        .format(db_config['PG_USER'], db_config['PG_PASSWORD'], db_config['PG_HOST'],
+        db_config['PG_PORT'], db_config['PG_NAME']),
+        cursor_factory=NamedTupleCursor, # fetch method will return named tuples instead of regular tuples
+    )
 
-    cur = connection.cursor()
+    cur = db.cursor()
 
     print("Loading data from database...")
-    cur.execute("SELECT ST_3DExtent({0}) FROM {1}".format(column_name, table_name))
+    cur.execute("SELECT ST_3DExtent({0}) FROM {1}".format(db_config['GEOMETRY'], db_config['TABLE']))
     extent = cur.fetchall()[0][0]
     extent = [m.split(" ") for m in extent[6:-1].split(",")]
     offset = [(float(extent[1][0]) + float(extent[0][0])) / 2,
               (float(extent[1][1]) + float(extent[0][1])) / 2,
               (float(extent[1][2]) + float(extent[0][2])) / 2]
 
-    id_statement = ""
-    if id_column_name is not None:
-        id_statement = "," + id_column_name
     cur.execute("SELECT ST_AsBinary(ST_Translate({0}, {1}, {2}, {3})),"
-                "ST_Area(ST_Force2D({0})) AS weight{5} FROM {4} ORDER BY weight DESC"
-                .format(column_name, -offset[0], -offset[1], -offset[2],
-                        table_name, id_statement))
+                "ST_Area(ST_Force2D({0})) AS weight, {5} FROM {4} ORDER BY weight DESC"
+                .format(db_config['GEOMETRY'], -offset[0], -offset[1], -offset[2],
+                        db_config['TABLE'], db_config['ID']))
     res = cur.fetchall()
     wkbs = [t[0] for t in res]
-    ids = None
-    if id_column_name is not None:
-        ids = [t[2] for t in res]
+    ids = [t[2] for t in res]
+
     transform = np.array([
         [1, 0, 0, offset[0]],
         [0, 1, 0, offset[1]],
@@ -285,29 +280,38 @@ if __name__ == '__main__':
     o_help = 'offset of the geometries (only with -d)'
     parser.add_argument('-o', nargs=3, metavar=('X', 'Y', 'Z'), type=float, help=o_help)
 
-    D_help = 'database name'
+    D_help = 'database configuration file path'
     group.add_argument('-D', metavar='DATABASE', type=str, help=D_help)
 
-    t_help = 'table name'
-    parser.add_argument('-t', metavar='TABLE', type=str, help=t_help)
-
-    c_help = 'geometry column name'
-    parser.add_argument('-c', metavar='COLUMN', type=str, help=c_help)
-
-    i_help = 'identifier column name'
-    parser.add_argument('-i', metavar='IDCOLUMN', type=str, help=c_help)
-
-    u_help = 'database user name'
-    parser.add_argument('-u', metavar='USER', type=str, help=u_help)
+    temporal_help = 'Includes temporal information into the tileset'
+    parser.add_argument('-t', '--temporal', dest='temporal', action='store_true', help=temporal_help)
 
     args = parser.parse_args()
 
-    if args.D != None and (args.t == None or args.c == None):
-        print("Error: please define a table (-t) and column (-c)")
-        exit()
+    if args.D != None: # Database
+        # Load yml db configuration file
+        db_config = None
 
-    if args.D != None:
-        from_db(args.D, args.t, args.c, args.i, args.u)
+        with open(args.D, 'r') as db_config_file:
+            try:
+                db_config = yaml.load(db_config_file)
+                db_config_file.close()
+            except:
+                print('ERROR: ', sys.exec_info()[0])
+                db_config_file.close()
+                sys.exit()
+
+        # Check that db configuration is well defined
+        if (("PG_HOST" not in db_config) or ("PG_NAME" not in db_config)
+            or ("PG_PORT" not in db_config) or ("PG_USER" not in db_config)
+            or ("PG_PASSWORD" not in db_config) or ("TABLE" not in db_config)
+            or ("ID" not in db_config) or ("GEOMETRY" not in db_config)):
+            print(("ERROR: Database is not properly defined in '{0}', please refer to README.md"
+                  .format(args.D)))
+            sys.exit()
+
+        from_db(db_config)
+
     elif args.d != None:
         from_directory(args.d, args.o)
     else:

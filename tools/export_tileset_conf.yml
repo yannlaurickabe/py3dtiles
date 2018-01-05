@@ -1,0 +1,15 @@
+### Database configuration (not needed if you use export_tileset with a file)
+# MANDATORY - DB Credentials
+PG_HOST: <server hosting your db>
+PG_USER: <your db user name>
+PG_PORT: <port>
+PG_PASSWORD: <user password>
+PG_NAME: <database name>
+### DB Table Name and Column Names
+# MANDATORY - Table name and id and geometry columns names
+TABLE: <name of the table containing the ids and geometries>
+ID: <id colum name>
+GEOMETRY: <geometry column name>
+# OPTIONAL - Needed if you use export_tileset with -t (or --temporal) option
+YEAR_OF_CONSTRUCTION: <year of construction column name>
+YEAR_OF_DEMOLITION: <year of demolition column name>
