@@ -99,14 +99,13 @@ correctly placed. Usage example:
     $ export_tileset -d my_directory -o 10000 10000 0
 
 
-The database export requires a user name, a database name, the name of the table
-and its column that contains the geometry and (optionaly) the name of the column
-that contains the object's ID. Usage example:
+The database export requires a configuration file (e.g. tools/export_tileset_conf.yml)
+This export has a temporal extension as an option (runned by adding -t option).
+Usage example:
 
 .. code-block:: shell
 
-    $ export_tileset -D database -t my_city -c geom -i id -u oslandia
-
+    $ export_tileset -D database_conf_file.yml -t
 
 Point Cloud
 ~~~~~~~~~~~

@@ -32,6 +32,9 @@ class Feature():
     def __init__(self, index, box):
         self.index = index
         self.box = box
+        # Used for temporal extension
+        self.year_of_construction = None
+        self.year_of_demolition = None
 
 class Node():
     counter = 0
@@ -42,6 +45,9 @@ class Node():
         self.features = features
         self.box = None
         self.children = []
+        # Used for temporal extension
+        self.start_date = None
+        self.end_date = None
 
     def add(self, node):
         self.children.append(node)
@@ -55,31 +61,37 @@ class Node():
         for g in self.features:
             self.box.add(g.box)
 
-    def to_tileset(self, transform):
+    def to_tileset(self, transform, temporalExtension=False):
         self.compute_bbox()
         tiles = {
             "asset": {"version" : "1.0", "gltfUpAxis": "Z"},
             "geometricError": 500, # TODO
-            "root" : self.to_tileset_r(500)
+            "root" : self.to_tileset_r(500, temporalExtension)
         }
         tiles["root"]["transform"] = [round(float(e), 3) for e in transform]
         return tiles
 
-    def to_tileset_r(self, error):
+    def to_tileset_r(self, error, temporalExtension=False):
         (c1, c2) = (self.box.min, self.box.max)
         center = [(c1[i] + c2[i]) / 2 for i in range(0,3)]
         xAxis = [c2[0] - c1[0], 0, 0]
         yAxis = [0, c2[1] - c1[1], 0]
         zAxis = [0, 0, c2[2] - c1[2]]
         box = [round(x, 3) for x in center + xAxis + yAxis + zAxis]
+
         tile = {
             "boundingVolume": {
-                "box": box
+                "box": box,
             },
             "geometricError": error, # TODO
-            "children": [n.to_tileset_r(error / 2.) for n in self.children],
+            "children": [n.to_tileset_r(error / 2., temporalExtension) for n in self.children],
             "refine": "add"
         }
+
+        if temporalExtension:
+            tile["boundingVolume"]["start_date"] = self.start_date.isoformat()
+            tile["boundingVolume"]["end_date"] = self.end_date.isoformat()
+
         if len(self.features) != 0:
             tile["content"] = {
                 "url": "tiles/{0}.b3dm".format(self.id)
@@ -93,6 +105,41 @@ class Node():
             nodes.extend(c.all_nodes())
         return nodes
 
+    # Computes the earliest start_date of the node amongst the dates
+    # of constructions of its features and the one of its children
+    def compute_tree_start_date_r(self):
+        # Compute earliest year_of_construction of features of node
+        for feature in self.features:
+            if self.start_date is None:
+                self.start_date = feature.year_of_construction
+            else:
+                self.start_date=min(self.start_date, feature.year_of_construction)
+
+        # Recurse on children and compute earliest start_date
+        for n in self.children:
+            n.compute_tree_start_date_r()
+            if self.start_date is None:
+                self.start_date = n.start_date
+            else:
+                self.start_date = min(self.start_date, n.start_date)
+
+    # Computes the latest end_date of the node amongst the dates
+    # of demolitions of its features and the one of its children
+    def compute_tree_end_date_r(self):
+        # Compute latest year_of_demoliton of features of node n
+        for feature in self.features:
+            if self.end_date is None:
+                self.end_date = feature.year_of_demolition
+            else:
+                self.end_date=max(self.end_date, feature.year_of_demolition)
+
+        # Recurse on children and compute latest start_date
+        for n in self.children:
+            n.compute_tree_end_date_r()
+            if self.end_date is None:
+                self.end_date = n.end_date
+            else:
+                self.end_date = min(self.end_date, n.end_date)
 
 def tile_extent(extent, size, i, j):
     minExtent = [extent.min[0] + i*size,
@@ -101,9 +148,8 @@ def tile_extent(extent, size, i, j):
                  extent.min[1] + (j+1)*size]
     return BoundingBox(minExtent, maxExtent)
 
-
 # TODO: transform
-def arrays2tileset(positions, normals, bboxes, transform, ids=None):
+def arrays2tileset(positions, normals, bboxes, transform, ids, temporalExtension, year_const, year_demol):
     print("Creating tileset...")
     maxTileSize = 2000
     featuresPerTile = 20;
@@ -148,10 +194,7 @@ def arrays2tileset(positions, normals, bboxes, transform, ids=None):
                 node = Node(geoms)
                 tree.add(node)
 
-    # Export b3dm & tileset
-    tileset = tree.to_tileset(transform)
-    f = open("tileset.json".format(node.id), 'w')
-    f.write(json.dumps(tileset))
+    # Export b3dm
     print("Creating tiles...")
     nodes = tree.all_nodes()
     identity = np.identity(4).flatten('F')
@@ -164,6 +207,9 @@ def arrays2tileset(positions, normals, bboxes, transform, ids=None):
         if len(node.features) != 0:
             binarrays = []
             gids = []
+            if temporalExtension:
+                year_const_tile = []
+                year_demol_tile = []
             for feature in node.features:
                 pos = feature.index
                 binarrays.append({
@@ -172,12 +218,33 @@ def arrays2tileset(positions, normals, bboxes, transform, ids=None):
                     'bbox': [[float(i) for i in j] for j in bboxes[pos]],
                 })
                 gids.append(ids[pos])
+                if temporalExtension:
+                    # Convert dates to strings in isoformat and fill lists of dates
+                    year_const_tile.append(year_const[pos].isoformat())
+                    feature.year_of_construction = year_const[pos]
+
+                    year_demol_tile.append(year_demol[pos].isoformat())
+                    feature.year_of_demolition = year_demol[pos]
+
             gltf = GlTF.from_binary_arrays(binarrays, identity)
             bt = BatchTable()
             bt.add_property_from_array("id", gids)
+            if temporalExtension:
+                bt.add_property_from_array("year_of_construction", year_const_tile)
+                bt.add_property_from_array("year_of_demolition", year_demol_tile)
             b3dm = B3dm.from_glTF(gltf, bt).to_array()
             f = open("tiles/{0}.b3dm".format(node.id), 'wb')
             f.write(b3dm)
+
+    # Export Tileset
+    if temporalExtension: # Compute temporal interval of existence of tiles
+        tree.compute_tree_start_date_r()
+        tree.compute_tree_end_date_r()
+
+    tileset = tree.to_tileset(transform, temporalExtension)
+    f = open("tileset.json".format(node.id), 'w')
+    f.write(json.dumps(tileset))
+
 
 def divide(extent, geometries, xOffset, yOffset, tileSize,
            featuresPerTile, parent):
@@ -202,14 +269,14 @@ def divide(extent, geometries, xOffset, yOffset, tileSize,
                 node = Node(geoms)
                 parent.add(node)
 
-def wkbs2tileset(wkbs, ids, transform):
+def wkbs2tileset(wkbs, transform, ids=None, temporalExtension=False, year_const=None, year_demol=None):
     geoms = [TriangleSoup.from_wkb_multipolygon(wkb) for wkb in wkbs]
     positions = [ts.getPositionArray() for ts in geoms]
     normals = [ts.getNormalArray() for ts in geoms]
     bboxes = [ts.getBbox() for ts in geoms]
-    arrays2tileset(positions, normals, bboxes, transform, ids)
+    arrays2tileset(positions, normals, bboxes, transform, ids, temporalExtension, year_const, year_demol)
 
-def from_db(db_config):
+def from_db(db_config, temporalExtension):
 
     # Connect to database
     db = connect(
@@ -229,13 +296,32 @@ def from_db(db_config):
               (float(extent[1][1]) + float(extent[0][1])) / 2,
               (float(extent[1][2]) + float(extent[0][2])) / 2]
 
-    cur.execute("SELECT ST_AsBinary(ST_Translate({0}, {1}, {2}, {3})),"
-                "ST_Area(ST_Force2D({0})) AS weight, {5} FROM {4} ORDER BY weight DESC"
-                .format(db_config['GEOMETRY'], -offset[0], -offset[1], -offset[2],
-                        db_config['TABLE'], db_config['ID']))
+    if temporalExtension:
+        cur.execute("SELECT ST_AsBinary(ST_Translate({0}, {1}, {2}, {3})),"
+                    "St_Area(Box2D({0})) AS weight, {5}, {6}, {7} FROM {4} ORDER BY weight DESC"
+                    .format(db_config['GEOMETRY'], -offset[0], -offset[1], -offset[2],
+                            db_config['TABLE'], db_config['ID'], db_config['YEAR_OF_CONSTRUCTION'],
+                            db_config['YEAR_OF_DEMOLITION']))
+    else:
+        cur.execute("SELECT ST_AsBinary(ST_Translate({0}, {1}, {2}, {3})),"
+                    "ST_Area(ST_Force2D({0})) AS weight, {5} FROM {4} ORDER BY weight DESC"
+                    .format(db_config['GEOMETRY'], -offset[0], -offset[1], -offset[2],
+                            db_config['TABLE'], db_config['ID']))
+
     res = cur.fetchall()
     wkbs = [t[0] for t in res]
     ids = [t[2] for t in res]
+    year_const = None
+    year_demol = None
+
+    if temporalExtension:
+        year_const = [t[3] for t in res]
+        year_demol = [t[4] for t in res]
+        if None in year_const or None in year_demol:
+            raise RuntimeError("construction and destruction dates of features "
+            "must be filled in the database")
+            sys.exit()
+
 
     transform = np.array([
         [1, 0, 0, offset[0]],
@@ -244,7 +330,7 @@ def from_db(db_config):
         [0, 0, 0, 1]], dtype=float)
     transform = transform.flatten('F')
 
-    wkbs2tileset(wkbs, ids, transform)
+    wkbs2tileset(wkbs, transform, ids, temporalExtension, year_const, year_demol)
 
 def from_directory(directory, offset):
     # TODO: improvement -> order wkbs by geometry size, similarly to database mode
@@ -265,7 +351,7 @@ def from_directory(directory, offset):
         [0, 0, 1, offset[2]],
         [0, 0, 0, 1]], dtype=float)
     transform = transform.flatten('F')
-    wkbs2tileset(wkbs, None, transform)
+    wkbs2tileset(wkbs, transform)
 
 if __name__ == '__main__':
     # arg parse
@@ -283,7 +369,7 @@ if __name__ == '__main__':
     D_help = 'database configuration file path'
     group.add_argument('-D', metavar='DATABASE', type=str, help=D_help)
 
-    temporal_help = 'Includes temporal information into the tileset'
+    temporal_help = 'Outputs a temporally extended 3d-tiles file. Only works with -D'
     parser.add_argument('-t', '--temporal', dest='temporal', action='store_true', help=temporal_help)
 
     args = parser.parse_args()
@@ -306,11 +392,11 @@ if __name__ == '__main__':
             or ("PG_PORT" not in db_config) or ("PG_USER" not in db_config)
             or ("PG_PASSWORD" not in db_config) or ("TABLE" not in db_config)
             or ("ID" not in db_config) or ("GEOMETRY" not in db_config)):
-            print(("ERROR: Database is not properly defined in '{0}', please refer to README.md"
-                  .format(args.D)))
+            raise RuntimeError("ERROR: Database is not properly defined in "
+            "'{0}', please refer to README.rst".format(args.D))
             sys.exit()
 
-        from_db(db_config)
+        from_db(db_config, args.temporal)
 
     elif args.d != None:
         from_directory(args.d, args.o)
