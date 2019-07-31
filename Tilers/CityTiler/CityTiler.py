@@ -118,8 +118,8 @@ def from_3dcitydb(cursor, objects_type):
         # The current new tile bounding volume shall be a box enclosing the
         # buildings withheld in the considered tile_cityobjects:
         bounding_box = BoundingVolumeBox()
-        for building in tile_cityobjects:
-            bounding_box.add(building.get_bounding_volume_box())
+        for cityobject in tile_cityobjects:
+            bounding_box.add(cityobject.get_bounding_volume_box())
 
         # The Tile Content returned by the above call to create_tile_content()
         # (refer to the usage of the centroid/offset third argument) uses
